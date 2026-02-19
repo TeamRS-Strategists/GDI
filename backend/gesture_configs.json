@@ -1,0 +1,16 @@
+{
+  "gestures": [
+    {
+      "name": "Thumbs up",
+      "action_type": "preset",
+      "action": "Volume Up",
+      "keys": ""
+    },
+    {
+      "name": "Thumbs down",
+      "action_type": "preset",
+      "action": "Volume Down",
+      "keys": ""
+    }
+  ]
+}
