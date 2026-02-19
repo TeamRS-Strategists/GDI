@@ -11,6 +11,18 @@
       "action_type": "preset",
       "action": "Volume Down",
       "keys": ""
+    },
+    {
+      "name": "Palm",
+      "action_type": "preset",
+      "action": "Screenshot",
+      "keys": ""
+    },
+    {
+      "name": "middle finger",
+      "action_type": "preset",
+      "action": "Play/Pause",
+      "keys": ""
     }
   ]
 }

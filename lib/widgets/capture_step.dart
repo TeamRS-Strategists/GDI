@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
 import '../main.dart';
 import 'hand_skeleton_painter.dart';
+import 'native_camera_view.dart';
 
 class CaptureStep extends StatefulWidget {
   final String gestureName;
@@ -44,9 +45,6 @@ class _CaptureStepState extends State<CaptureStep> with SingleTickerProviderStat
     return Consumer<GestureProvider>(
       builder: (context, provider, child) {
         final isComplete = provider.isTrainingComplete;
-        final logs = provider.logs;
-        // Simple heuristic to show progress based on logs or specific state if available
-        // Since provider doesn't expose precise progress % yet, we'll rely on state
         
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -83,7 +81,8 @@ class _CaptureStepState extends State<CaptureStep> with SingleTickerProviderStat
             const SizedBox(height: 20),
 
             // Live Preview / Skeleton
-            Expanded(
+            AspectRatio(
+              aspectRatio: 4 / 3,
               child: Container(
                 decoration: BoxDecoration(
                   color: Colors.black.withOpacity(0.3),
@@ -98,7 +97,14 @@ class _CaptureStepState extends State<CaptureStep> with SingleTickerProviderStat
                   ),
                 ),
                 child: Stack(
+                  fit: StackFit.expand,
                   children: [
+                    // Native Camera View
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: const NativeCameraView(),
+                    ),
+
                     // Skeleton visualization
                     if (provider.currentResponse.hasHand)
                       ClipRRect(
@@ -116,7 +122,7 @@ class _CaptureStepState extends State<CaptureStep> with SingleTickerProviderStat
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          if (!provider.currentResponse.hasHand)
+                          if (!provider.currentResponse.hasHand && !isComplete)
                             Column(
                               children: [
                                 Icon(Icons.front_hand_rounded, 
@@ -134,7 +140,7 @@ class _CaptureStepState extends State<CaptureStep> with SingleTickerProviderStat
                               ],
                             ),
                           
-                          if (_isRecording && provider.currentResponse.hasHand)
+                          if (_isRecording && !isComplete && provider.currentResponse.hasHand)
                              AnimatedBuilder(
                                animation: _pulseCtrl,
                                builder: (context, _) => Container(
@@ -201,7 +207,7 @@ class _CaptureStepState extends State<CaptureStep> with SingleTickerProviderStat
                   ),
                   elevation: _isRecording ? 0 : 4,
                 ),
-                child: _isRecording
+                child: (_isRecording && !isComplete)
                   ? const SizedBox(
                       width: 20, 
                       height: 20, 
