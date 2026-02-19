@@ -53,95 +53,92 @@ class _AddGestureDialogState extends State<AddGestureDialog> {
   }
 
   @override
+  @override
   Widget build(BuildContext context) {
-    return Consumer<GestureProvider>(
-      builder: (context, provider, child) {
-        return Dialog(
-          backgroundColor: Colors.transparent,
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(18),
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-              child: Container(
-                width: 520,
-                padding: const EdgeInsets.all(28),
-                decoration: BoxDecoration(
-                  color: AppColors.surface.withOpacity(0.9),
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: AppColors.cyan.withOpacity(0.15)),
-                  boxShadow: [
-                    BoxShadow(color: AppColors.cyan.withOpacity(0.05), blurRadius: 40, spreadRadius: 4),
-                  ],
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(18),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+          child: Container(
+            width: 520,
+            padding: const EdgeInsets.all(28),
+            decoration: BoxDecoration(
+              color: AppColors.surface.withOpacity(0.9),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: AppColors.cyan.withOpacity(0.15)),
+              boxShadow: [
+                BoxShadow(color: AppColors.cyan.withOpacity(0.05), blurRadius: 40, spreadRadius: 4),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Title + Close
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    // Title + Close
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          _getTitle(),
-                          style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700),
-                        ),
-                        IconButton(
-                          onPressed: () => Navigator.pop(context),
-                          icon: const Icon(Icons.close_rounded, color: AppColors.textSecondary, size: 20),
-                          splashRadius: 16,
-                        ),
-                      ],
+                    Text(
+                      _getTitle(),
+                      style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700),
                     ),
-                    const SizedBox(height: 20),
-
-                    // Stepper indicator
-                    _buildStepperIndicator(),
-                    const SizedBox(height: 24),
-
-                    // Content
-                    _buildContent(provider),
-                    const SizedBox(height: 28),
-
-                    // Action buttons
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        if (_currentStep == 0)
-                          TextButton(
-                            onPressed: () => Navigator.pop(context),
-                            child: const Text('Cancel', style: TextStyle(color: AppColors.textSecondary)),
-                          ),
-                        if (_currentStep == 2)
-                          TextButton(
-                            onPressed: () => setState(() => _currentStep = 0),
-                            child: const Text('Start Over', style: TextStyle(color: AppColors.textSecondary)),
-                          ),
-                        const SizedBox(width: 12),
-                        // Show Next/Save button on steps 0 and 2 (step 1 has its own "I'm Ready" button)
-                        if (_currentStep != 1)
-                          ElevatedButton(
-                            onPressed: _canProceed(provider) ? () => _onNext(provider) : null,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: AppColors.cyan,
-                              foregroundColor: AppColors.bg,
-                              disabledBackgroundColor: AppColors.textSecondary.withOpacity(0.2),
-                              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                            ),
-                            child: Text(
-                              _currentStep == 2 ? 'Save to Library' : 'Next',
-                              style: const TextStyle(fontWeight: FontWeight.w600),
-                            ),
-                          ),
-                      ],
+                    IconButton(
+                      onPressed: () => Navigator.pop(context),
+                      icon: const Icon(Icons.close_rounded, color: AppColors.textSecondary, size: 20),
+                      splashRadius: 16,
                     ),
                   ],
                 ),
-              ),
+                const SizedBox(height: 20),
+
+                // Stepper indicator
+                _buildStepperIndicator(),
+                const SizedBox(height: 24),
+
+                // Content
+                _buildContent(),
+                const SizedBox(height: 28),
+
+                // Action buttons
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    if (_currentStep == 0)
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('Cancel', style: TextStyle(color: AppColors.textSecondary)),
+                      ),
+                    if (_currentStep == 2)
+                      TextButton(
+                        onPressed: () => setState(() => _currentStep = 0),
+                        child: const Text('Start Over', style: TextStyle(color: AppColors.textSecondary)),
+                      ),
+                    const SizedBox(width: 12),
+                    // Show Next/Save button on steps 0 and 2 (step 1 has its own "I'm Ready" button)
+                    if (_currentStep != 1)
+                      ElevatedButton(
+                        onPressed: _canProceed() ? _onNext : null,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.cyan,
+                          foregroundColor: AppColors.bg,
+                          disabledBackgroundColor: AppColors.textSecondary.withOpacity(0.2),
+                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                        child: Text(
+                          _currentStep == 2 ? 'Save to Library' : 'Next',
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                  ],
+                ),
+              ],
             ),
           ),
-        );
-      },
+        ),
+      ),
     );
   }
 
@@ -225,7 +222,7 @@ class _AddGestureDialogState extends State<AddGestureDialog> {
     }
   }
 
-  bool _canProceed(GestureProvider provider) {
+  bool _canProceed() {
     if (_currentStep == 0) {
       if (_nameController.text.isEmpty) return false;
       if (_isCustomKeyboard) return _keysController.text.isNotEmpty;
@@ -235,7 +232,7 @@ class _AddGestureDialogState extends State<AddGestureDialog> {
     return true;
   }
 
-  Widget _buildContent(GestureProvider provider) {
+  Widget _buildContent() {
     switch (_currentStep) {
       case 0:
         return _buildSetupStep();
@@ -568,11 +565,12 @@ class _AddGestureDialogState extends State<AddGestureDialog> {
     );
   }
 
-  void _onNext(GestureProvider provider) {
+  void _onNext() {
     if (_currentStep < 2) {
       setState(() => _currentStep++);
     } else {
       // Step 3: Save & Close
+      final provider = context.read<GestureProvider>();
       final config = GestureConfig(
         name: _nameController.text,
         action: _isCustomKeyboard ? _keysController.text : (_selectedAction ?? ''),
