@@ -86,9 +86,9 @@ def delete_gesture(name: str):
     return {"status": "ok" if found else "not_found", "gesture": name}
 
 # ── Constants ────────────────────────────────────────────────────────────────
-TARGET_FPS = 30
-FRAME_INTERVAL = 1.0 / TARGET_FPS   # ~33 ms
-PROCESS_EVERY_N = 2  # Process every 2nd frame (frame skipper)
+TARGET_FPS = 60
+FRAME_INTERVAL = 1.0 / TARGET_FPS   # ~16 ms
+PROCESS_EVERY_N = 1  # Process every frame for lowest latency
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -100,7 +100,8 @@ def _open_camera(index: int = 0) -> cv2.VideoCapture:
         raise RuntimeError(f"Cannot open camera index {index}")
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-    cap.set(cv2.CAP_PROP_FPS, TARGET_FPS)
+    cap.set(cv2.CAP_PROP_FPS, 60)
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     logger.info("Camera %d opened  (%dx%d)", index, 640, 480)
     return cap
 
