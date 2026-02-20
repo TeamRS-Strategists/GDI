@@ -1,0 +1,12 @@
+# GestureFlow startup commands
+
+# 1) Go to project root
+cd /Users/siddhantparashar/projects/GDI
+
+# 2) Start backend
+./start_backend.sh
+
+# 3) In a new terminal, start frontend
+cd /Users/siddhantparashar/projects/GDI
+flutter pub get
+flutter run -d macos
