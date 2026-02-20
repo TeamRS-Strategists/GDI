@@ -7,15 +7,130 @@ Active by default — no training required.
 import time
 import math
 import logging
+import sys
 
 import numpy as np
-import pyautogui
 
 logger = logging.getLogger(__name__)
 
-# Prevent pyautogui fail-safe (moving mouse to corner to abort)
-pyautogui.FAILSAFE = False
-pyautogui.PAUSE = 0        # no artificial delay between pyautogui calls
+# ── Platform-specific setup ──────────────────────────────────────────────
+IS_MACOS = sys.platform == "darwin"
+
+if IS_MACOS:
+    import ctypes
+    import ctypes.util
+    
+    # Load Core Graphics framework
+    _cg = ctypes.CDLL(ctypes.util.find_library("CoreGraphics"))
+    
+    # CGPoint structure
+    class CGPoint(ctypes.Structure):
+        _fields_ = [("x", ctypes.c_double), ("y", ctypes.c_double)]
+    
+    # Function prototypes
+    _cg.CGMainDisplayID.argtypes = []
+    _cg.CGMainDisplayID.restype = ctypes.c_uint32
+    
+    _cg.CGDisplayPixelsWide.argtypes = [ctypes.c_uint32]
+    _cg.CGDisplayPixelsWide.restype = ctypes.c_size_t
+    
+    _cg.CGDisplayPixelsHigh.argtypes = [ctypes.c_uint32]
+    _cg.CGDisplayPixelsHigh.restype = ctypes.c_size_t
+    
+    _cg.CGEventCreateMouseEvent.argtypes = [ctypes.c_void_p, ctypes.c_uint32, CGPoint, ctypes.c_uint32]
+    _cg.CGEventCreateMouseEvent.restype = ctypes.c_void_p
+    
+    _cg.CGEventPost.argtypes = [ctypes.c_uint32, ctypes.c_void_p]
+    _cg.CGEventPost.restype = None
+    
+    _cg.CFRelease.argtypes = [ctypes.c_void_p]
+    _cg.CFRelease.restype = None
+    
+    # Event types
+    kCGEventMouseMoved = 5
+    kCGEventLeftMouseDown = 1
+    kCGEventLeftMouseUp = 2
+    kCGEventRightMouseDown = 3
+    kCGEventRightMouseUp = 4
+    kCGMouseButtonLeft = 0
+    kCGMouseButtonRight = 1
+    
+    class _MacMouseAPI:
+        """Wrapper for macOS mouse operations using ctypes."""
+        
+        @staticmethod
+        def size():
+            """Get screen size."""
+            display_id = _cg.CGMainDisplayID()
+            width = _cg.CGDisplayPixelsWide(display_id)
+            height = _cg.CGDisplayPixelsHigh(display_id)
+            return (int(width), int(height))
+        
+        @staticmethod
+        def moveTo(x, y):
+            """Move mouse to absolute position."""
+            point = CGPoint(float(x), float(y))
+            event = _cg.CGEventCreateMouseEvent(None, kCGEventMouseMoved, point, 0)
+            if event:
+                _cg.CGEventPost(0, event)
+                _cg.CFRelease(event)
+        
+        @staticmethod
+        def click():
+            """Perform left mouse click at current position."""
+            # We need to get current position - use CGEventGetLocation from a new event
+            # Simpler: just create events at (0,0) won't matter since we just moved there
+            event_source = None
+            # Create a null event to get current mouse location
+            null_event = _cg.CGEventCreate(event_source)
+            if null_event:
+                _cg.CGEventGetLocation.argtypes = [ctypes.c_void_p]
+                _cg.CGEventGetLocation.restype = CGPoint
+                point = _cg.CGEventGetLocation(null_event)
+                _cg.CFRelease(null_event)
+            else:
+                point = CGPoint(0, 0)
+            
+            down = _cg.CGEventCreateMouseEvent(None, kCGEventLeftMouseDown, point, kCGMouseButtonLeft)
+            up = _cg.CGEventCreateMouseEvent(None, kCGEventLeftMouseUp, point, kCGMouseButtonLeft)
+            if down and up:
+                _cg.CGEventPost(0, down)
+                _cg.CGEventPost(0, up)
+                _cg.CFRelease(down)
+                _cg.CFRelease(up)
+        
+        @staticmethod
+        def rightClick():
+            """Perform right mouse click at current position."""
+            event_source = None
+            null_event = _cg.CGEventCreate(event_source)
+            if null_event:
+                _cg.CGEventGetLocation.argtypes = [ctypes.c_void_p]
+                _cg.CGEventGetLocation.restype = CGPoint
+                point = _cg.CGEventGetLocation(null_event)
+                _cg.CFRelease(null_event)
+            else:
+                point = CGPoint(0, 0)
+            
+            down = _cg.CGEventCreateMouseEvent(None, kCGEventRightMouseDown, point, kCGMouseButtonRight)
+            up = _cg.CGEventCreateMouseEvent(None, kCGEventRightMouseUp, point, kCGMouseButtonRight)
+            if down and up:
+                _cg.CGEventPost(0, down)
+                _cg.CGEventPost(0, up)
+                _cg.CFRelease(down)
+                _cg.CFRelease(up)
+    
+    # Add CGEventCreate prototype
+    _cg.CGEventCreate.argtypes = [ctypes.c_void_p]
+    _cg.CGEventCreate.restype = ctypes.c_void_p
+    
+    pyautogui = _MacMouseAPI()
+    FAILSAFE = False
+    PAUSE = 0
+else:
+    import pyautogui
+    pyautogui.FAILSAFE = False
+    pyautogui.PAUSE = 0
 
 
 class MouseController:
@@ -27,9 +142,9 @@ class MouseController:
     def __init__(
         self,
         frame_reduction: int = 100,
-        smoothening: int = 7,
+        smoothening: int = 3,
         click_threshold: float = 0.05,
-        click_cooldown: float = 0.5,
+        click_cooldown: float = 0.3,
     ):
         """
         Parameters
