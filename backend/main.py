@@ -23,6 +23,9 @@ from model import GestureClassifier
 from controller import DesktopController
 from mouse_engine import MouseController
 from gesture_config import GestureConfigStore
+from voice_assistant import create_voice_assistant, VoiceCommand, VoiceState
+from openclaw_bridge import OpenClawBridge, is_openclaw_running
+from jarvis_service import JarvisService
 
 # ── Logging ──────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -48,8 +51,44 @@ config_store = GestureConfigStore()
 desktop_ctrl = DesktopController(gesture_map=config_store.build_gesture_map())
 mouse_ctrl = MouseController()
 
+# Voice assistant and OpenClaw bridge (optional features)
+voice_assistant = None
+openclaw_bridge = None
+voice_enabled = False
+
+# Jarvis conversational voice assistant
+jarvis_service: Optional[JarvisService] = None
+
+# Connected WebSocket clients for broadcasting
+active_websockets = set()
+
 # Try to load a previously saved model
 gesture_model.load_model()
+
+
+# ── Voice Event Broadcasting ─────────────────────────────────────────────────
+
+async def broadcast_voice_event(event_type: str, data: dict):
+    """Broadcast voice events to all connected WebSocket clients."""
+    message = {"type": event_type, "data": data}
+    disconnected = set()
+    
+    logger.info(f"📡 Broadcasting {event_type}")
+    logger.info(f"📦 Full message: {message}")
+    logger.info(f"👥 Active WebSocket clients: {len(active_websockets)}")
+    
+    for ws in active_websockets:
+        try:
+            await ws.send_json(message)
+            logger.info(f"✅ Sent to client: {message}")
+        except Exception as e:
+            logger.error(f"❌ Error broadcasting to websocket: {e}")
+            disconnected.add(ws)
+    
+    # Clean up disconnected clients
+    active_websockets.difference_update(disconnected)
+    if disconnected:
+        logger.info(f"🧹 Cleaned up {len(disconnected)} disconnected clients")
 
 
 # ── Pydantic models for REST API ─────────────────────────────────────────────
@@ -85,6 +124,318 @@ def delete_gesture(name: str):
         desktop_ctrl.gesture_map = config_store.build_gesture_map()
     return {"status": "ok" if found else "not_found", "gesture": name}
 
+
+# ── Voice Assistant API endpoints ────────────────────────────────────────────
+
+@app.get("/api/voice/status")
+async def get_voice_status():
+    """Get voice assistant status."""
+    global voice_assistant, voice_enabled, openclaw_bridge
+    
+    openclaw_running = False
+    if openclaw_bridge:
+        openclaw_running = openclaw_bridge.connected
+    else:
+        # Check if OpenClaw Gateway is accessible
+        try:
+            openclaw_running = await is_openclaw_running()
+        except:
+            pass
+    
+    return {
+        "enabled": voice_enabled,
+        "state": voice_assistant.state.value if voice_assistant else "disabled",
+        "openclaw_connected": openclaw_running,
+        "wake_word": "jarvis" if voice_assistant else None,
+        "features": {
+            "speech_recognition": voice_assistant is not None,
+            "tts": voice_assistant.tts_engine is not None if voice_assistant else False,
+            "openclaw": openclaw_running
+        }
+    }
+
+
+@app.post("/api/voice/start")
+async def start_voice_assistant():
+    """Start the voice assistant."""
+    global voice_assistant, voice_enabled, openclaw_bridge
+    
+    if voice_enabled and voice_assistant:
+        return {"status": "already_running"}
+    
+    try:
+        # Initialize voice assistant
+        voice_assistant = create_voice_assistant(
+            wake_word="jarvis",
+            language="en-US",
+            timeout=5,
+            enable_tts=True
+        )
+        
+        if not voice_assistant:
+            return {"status": "error", "message": "Failed to create voice assistant"}
+        
+        # Set up wake word detection callback
+        async def on_wake_word():
+            logger.info("🎤 Wake word 'Jarvis' detected!")
+            await broadcast_voice_event("voice_wake_detected", {
+                "wake_word": "jarvis",
+                "voice_state": "listening"
+            })
+        
+        # Set up command callback
+        async def on_voice_command(cmd: VoiceCommand):
+            logger.info(f"Voice command received: {cmd.text}")
+            # Queue command for processing
+            asyncio.create_task(process_voice_command(cmd))
+        
+        # Register callbacks
+        voice_assistant.on_wake_word = on_wake_word
+        voice_assistant.on_command = on_voice_command
+        
+        # Start listening
+        voice_assistant.start()
+        voice_enabled = True
+        
+        # Try to connect to OpenClaw if available
+        try:
+            openclaw_bridge = OpenClawBridge()
+            connected = await openclaw_bridge.connect()
+            if connected:
+                logger.info("Connected to OpenClaw Gateway")
+            else:
+                logger.warning("OpenClaw Gateway not available - voice commands will use basic execution")
+        except Exception as e:
+            logger.warning(f"Could not connect to OpenClaw: {e}")
+        
+        return {
+            "status": "started",
+            "wake_word": "jarvis",
+            "openclaw_connected": openclaw_bridge.connected if openclaw_bridge else False
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to start voice assistant: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/api/voice/stop")
+def stop_voice_assistant():
+    """Stop the voice assistant."""
+    global voice_assistant, voice_enabled, openclaw_bridge
+    
+    if not voice_enabled or not voice_assistant:
+        return {"status": "not_running"}
+    
+    try:
+        voice_assistant.stop()
+        voice_enabled = False
+        
+        # Disconnect from OpenClaw
+        if openclaw_bridge:
+            asyncio.create_task(openclaw_bridge.disconnect())
+        
+        return {"status": "stopped"}
+        
+    except Exception as e:
+        logger.error(f"Failed to stop voice assistant: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+# ── Jarvis Voice Assistant API endpoints ────────────────────────────────────
+
+@app.get("/api/jarvis/status")
+async def get_jarvis_status():
+    """Get Jarvis voice assistant status."""
+    global jarvis_service
+    
+    if not jarvis_service:
+        return {
+            "is_running": False,
+            "state": "idle",
+            "available": True
+        }
+    
+    return jarvis_service.get_status()
+
+
+@app.get("/api/jarvis/events")
+async def get_jarvis_events(since_id: int = 0, limit: int = 200):
+    """Get recent Jarvis events for polling fallback on frontend."""
+    global jarvis_service
+
+    if not jarvis_service:
+        return {
+            "events": [],
+            "last_event_id": since_id,
+        }
+
+    events = jarvis_service.get_events(since_id=since_id, limit=limit)
+    last_event_id = since_id
+    if events:
+        last_event_id = events[-1].get("id", since_id)
+
+    return {
+        "events": events,
+        "last_event_id": last_event_id,
+    }
+
+
+@app.post("/api/jarvis/start")
+async def start_jarvis():
+    """Start Jarvis conversational voice assistant."""
+    global jarvis_service
+    
+    try:
+        # Create service if not exists
+        if not jarvis_service:
+            jarvis_service = JarvisService(broadcast_callback=broadcast_voice_event)
+        
+        # Start Jarvis
+        result = await jarvis_service.start()
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error starting Jarvis: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/api/jarvis/stop")
+async def stop_jarvis():
+    """Stop Jarvis voice assistant."""
+    global jarvis_service
+    
+    if not jarvis_service:
+        return {"status": "not_running"}
+    
+    try:
+        result = await jarvis_service.stop()
+        return result
+    except Exception as e:
+        logger.error(f"Error stopping Jarvis: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/voice/commands")
+def get_voice_commands():
+    """Get pending voice commands from the queue."""
+    global voice_assistant
+    
+    if not voice_assistant:
+        return {"commands": []}
+    
+    commands = voice_assistant.get_pending_commands()
+    return {
+        "commands": [
+            {
+                "text": cmd.text,
+                "confidence": cmd.confidence,
+                "timestamp": cmd.timestamp,
+                "language": cmd.language
+            }
+            for cmd in commands
+        ]
+    }
+
+
+async def process_voice_command(cmd: VoiceCommand):
+    """
+    Process a voice command - send to OpenClaw or execute locally.
+    
+    Args:
+        cmd: Voice command to process
+    """
+    global openclaw_bridge
+    
+    try:
+        logger.info(f"Processing voice command: '{cmd.text}'")
+        
+        # Broadcast that command was received
+        await broadcast_voice_event("voice_command", {
+            "command": cmd.text,
+            "voice_state": "processing"
+        })
+        
+        # If OpenClaw is connected, send command there
+        if openclaw_bridge and openclaw_bridge.connected:
+            result = await openclaw_bridge.execute_command(cmd.text)
+            logger.info(f"OpenClaw result: {result}")
+            
+            # Broadcast completion
+            if "error" not in result:
+                await broadcast_voice_event("voice_response", {
+                    "command": cmd.text,
+                    "response": result.get("response", "Command executed successfully"),
+                    "voice_state": "idle"
+                })
+            else:
+                await broadcast_voice_event("voice_response", {
+                    "command": cmd.text,
+                    "response": f"Error: {result['error']}",
+                    "voice_state": "error"
+                })
+            
+            # Provide audio feedback
+            if voice_assistant and voice_assistant.enable_tts:
+                if "error" not in result:
+                    voice_assistant.speak("Command executed")
+                else:
+                    voice_assistant.speak("Command failed")
+        
+        else:
+            # Fallback: execute simple commands locally
+            response = await execute_local_voice_command(cmd.text)
+            await broadcast_voice_event("voice_response", {
+                "command": cmd.text,
+                "response": response,
+                "voice_state": "idle"
+            })
+
+            await execute_local_voice_command(cmd.text)
+            
+    except Exception as e:
+        logger.error(f"Error processing voice command: {e}")
+        if voice_assistant:
+            voice_assistant.speak("Sorry, something went wrong")
+
+
+async def execute_local_voice_command(command_text: str):
+    """
+    Execute simple voice commands locally without OpenClaw.
+    
+    Args:
+        command_text: Command text to execute
+    """
+    cmd_lower = command_text.lower()
+    
+    # Simple command patterns
+    if "hello" in cmd_lower or "hi" in cmd_lower:
+        if voice_assistant:
+            voice_assistant.speak("Hello! How can I help you?")
+    
+    elif "gesture" in cmd_lower and "status" in cmd_lower:
+        gestures = config_store.get_all()
+        count = len(gestures)
+        if voice_assistant:
+            voice_assistant.speak(f"You have {count} gestures configured")
+    
+    elif "mouse" in cmd_lower:
+        if "enable" in cmd_lower or "on" in cmd_lower:
+            desktop_ctrl.enabled = True
+            if voice_assistant:
+                voice_assistant.speak("Mouse control enabled")
+        elif "disable" in cmd_lower or "off" in cmd_lower:
+            desktop_ctrl.enabled = False
+            if voice_assistant:
+                voice_assistant.speak("Mouse control disabled")
+    
+    else:
+        # Unknown command
+        logger.warning(f"Unknown local voice command: {command_text}")
+        if voice_assistant:
+            voice_assistant.speak("I don't know how to do that yet. Try connecting to OpenClaw for more features.")
+
+
 # ── Constants ────────────────────────────────────────────────────────────────
 TARGET_FPS = 60
 FRAME_INTERVAL = 1.0 / TARGET_FPS   # ~16 ms
@@ -117,6 +468,9 @@ def _landmarks_to_list(hand_lms) -> list:
 async def websocket_endpoint(ws: WebSocket):
     await ws.accept()
     logger.info("Client connected")
+    
+    # Register this WebSocket for voice event broadcasting
+    active_websockets.add(ws)
 
     # Per-connection state
     training_mode = False
@@ -131,6 +485,7 @@ async def websocket_endpoint(ws: WebSocket):
     except RuntimeError as exc:
         await ws.send_json({"error": str(exc)})
         await ws.close()
+        active_websockets.discard(ws)
         return
 
     frame_count = 0
@@ -358,6 +713,8 @@ async def websocket_endpoint(ws: WebSocket):
     except Exception as exc:
         logger.exception("WebSocket error: %s", exc)
     finally:
+        # Remove from active websockets
+        active_websockets.discard(ws)
         cap.release()
         landmarker.close()
         logger.info("Camera and landmarker released")

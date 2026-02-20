@@ -1,0 +1,642 @@
+import 'dart:async';
+import 'package:flutter/material.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import '../services/socket_service.dart';
+
+class JarvisConversationWidget extends StatefulWidget {
+  final String backendUrl;
+  
+  const JarvisConversationWidget({
+    super.key,
+    this.backendUrl = 'http://localhost:8000',
+  });
+
+  @override
+  State<JarvisConversationWidget> createState() => _JarvisConversationWidgetState();
+}
+
+class _JarvisConversationWidgetState extends State<JarvisConversationWidget> with SingleTickerProviderStateMixin {
+  bool _isRunning = false;
+  String _currentState = 'idle';  // idle, listening, activated, processing, speaking
+  List<ConversationMessage> _messages = [];
+  int _lastEventId = 0;
+  final Set<int> _processedEventIds = <int>{};
+  StreamSubscription<dynamic>? _socketSubscription;
+  Timer? _eventPollTimer;
+  
+  late AnimationController _pulseController;
+  late Animation<double> _pulseAnimation;
+  
+  @override
+  void initState() {
+    super.initState();
+    
+    // Pulse animation for active states
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1500),
+    )..repeat(reverse: true);
+    
+    _pulseAnimation = Tween<double>(begin: 0.8, end: 1.2).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    );
+    
+    // Listen for voice events
+    _listenForVoiceEvents();
+    _startEventPolling();
+    
+    // Check initial status
+    _checkStatus();
+  }
+  
+  @override
+  void dispose() {
+    _socketSubscription?.cancel();
+    _eventPollTimer?.cancel();
+    _pulseController.dispose();
+    super.dispose();
+  }
+  
+  void _listenForVoiceEvents() {
+    final socketService = SocketService();
+    _socketSubscription = socketService.stream.listen((message) {
+      if (message is String) {
+        try {
+          final data = json.decode(message) as Map<String, dynamic>;
+          if (data['type'] == 'voice_event') {
+            final payload = data['data'];
+            if (payload is Map<String, dynamic>) {
+              _processVoiceEvent(payload);
+            }
+          } else if (data['type'] == 'jarvis_started' ||
+              data['type'] == 'jarvis_stopped' ||
+              data['type'] == 'state_change' ||
+              data['type'] == 'wake_word_detected' ||
+              data['type'] == 'user_speech' ||
+              data['type'] == 'processing' ||
+              data['type'] == 'jarvis_response') {
+            // Backward compatibility for non-nested payloads
+            _processVoiceEvent(data);
+          }
+        } catch (e) {
+          // Ignore non-JSON / non-voice messages
+        }
+      }
+    });
+  }
+
+  void _startEventPolling() {
+    _eventPollTimer = Timer.periodic(const Duration(milliseconds: 1200), (_) {
+      _fetchJarvisEvents();
+    });
+    _fetchJarvisEvents();
+  }
+
+  Future<void> _fetchJarvisEvents() async {
+    try {
+      final response = await http.get(
+        Uri.parse('${widget.backendUrl}/api/jarvis/events?since_id=$_lastEventId&limit=100'),
+      );
+
+      if (response.statusCode != 200) return;
+
+      final payload = json.decode(response.body) as Map<String, dynamic>;
+      final events = (payload['events'] as List<dynamic>? ?? const []);
+
+      for (final raw in events) {
+        if (raw is Map<String, dynamic>) {
+          _processVoiceEvent(raw);
+        } else if (raw is Map) {
+          _processVoiceEvent(Map<String, dynamic>.from(raw));
+        }
+      }
+
+      final last = payload['last_event_id'];
+      if (last is int && last > _lastEventId) {
+        _lastEventId = last;
+      }
+    } catch (_) {
+      // Polling is best-effort fallback; ignore transient errors
+    }
+  }
+
+  void _processVoiceEvent(Map<String, dynamic> event) {
+    final id = event['id'];
+    if (id is int) {
+      if (_processedEventIds.contains(id)) return;
+      _processedEventIds.add(id);
+      if (id > _lastEventId) {
+        _lastEventId = id;
+      }
+      if (_processedEventIds.length > 1000) {
+        _processedEventIds.remove(_processedEventIds.first);
+      }
+    }
+    _handleVoiceEvent(event);
+  }
+  
+  void _handleVoiceEvent(Map<String, dynamic> event) {
+    setState(() {
+      final type = event['type'];
+      
+      switch (type) {
+        case 'jarvis_started':
+          _isRunning = true;
+          _currentState = 'listening';
+          _addMessage('Jarvis started. Say "Jarvis" to begin.', isUser: false, isSystem: true);
+          break;
+          
+        case 'jarvis_stopped':
+          _isRunning = false;
+          _currentState = 'idle';
+          _addMessage('Jarvis stopped.', isUser: false, isSystem: true);
+          break;
+          
+        case 'state_change':
+          _currentState = event['state'] ?? 'idle';
+          break;
+          
+        case 'wake_word_detected':
+          _currentState = 'activated';
+          _addMessage('', isUser: false, isActivation: true);
+          break;
+          
+        case 'user_speech':
+          _currentState = 'processing';
+          final text = event['text'] ?? '';
+          if (text.isNotEmpty) {
+            _addMessage(text, isUser: true);
+          }
+          break;
+          
+        case 'processing':
+          _currentState = 'processing';
+          break;
+          
+        case 'jarvis_response':
+          _currentState = 'speaking';
+          final text = event['text'] ?? '';
+          if (text.isNotEmpty) {
+            _addMessage(text, isUser: false);
+          }
+          break;
+      }
+    });
+  }
+  
+  void _addMessage(String text, {required bool isUser, bool isActivation = false, bool isSystem = false}) {
+    setState(() {
+      _messages.add(ConversationMessage(
+        text: text,
+        isUser: isUser,
+        isActivation: isActivation,
+        isSystem: isSystem,
+        timestamp: DateTime.now(),
+      ));
+    });
+  }
+  
+  Future<void> _checkStatus() async {
+    try {
+      final response = await http.get(
+        Uri.parse('${widget.backendUrl}/api/jarvis/status'),
+      );
+      
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        setState(() {
+          _isRunning = data['is_running'] ?? false;
+          _currentState = data['state'] ?? 'idle';
+        });
+      }
+    } catch (e) {
+      print('Error checking Jarvis status: $e');
+    }
+  }
+  
+  Future<void> _toggleJarvis() async {
+    try {
+      final endpoint = _isRunning ? 'stop' : 'start';
+      final response = await http.post(
+        Uri.parse('${widget.backendUrl}/api/jarvis/$endpoint'),
+      );
+      
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        setState(() {
+          if (endpoint == 'start') {
+            _isRunning = data['status'] == 'started';
+            _currentState = data['state'] ?? 'listening';
+          } else {
+            _isRunning = false;
+            _currentState = 'idle';
+          }
+        });
+      }
+    } catch (e) {
+      print('Error toggling Jarvis: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: $e')),
+      );
+    }
+  }
+  
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      elevation: 4,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header
+            Row(
+              children: [
+                AnimatedBuilder(
+                  animation: _pulseAnimation,
+                  builder: (context, child) {
+                    return Transform.scale(
+                      scale: _isRunning && _currentState != 'idle' 
+                          ? _pulseAnimation.value 
+                          : 1.0,
+                      child: Container(
+                        width: 48,
+                        height: 48,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: LinearGradient(
+                            colors: _isRunning
+                                ? [Colors.blue.shade400, Colors.purple.shade400]
+                                : [Colors.grey.shade300, Colors.grey.shade400],
+                          ),
+                          boxShadow: _isRunning
+                              ? [
+                                  BoxShadow(
+                                    color: Colors.blue.withOpacity(0.5),
+                                    blurRadius: 20,
+                                    spreadRadius: 2,
+                                  ),
+                                ]
+                              : null,
+                        ),
+                        child: Icon(
+                          _isRunning ? Icons.mic : Icons.mic_off,
+                          color: Colors.white,
+                          size: 24,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Jarvis Voice Assistant',
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                              fontWeight: FontWeight.bold,
+                            ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        _getStateText(),
+                        style: TextStyle(
+                          color: _getStateColor(),
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Switch(
+                  value: _isRunning,
+                  onChanged: (value) => _toggleJarvis(),
+                  activeColor: Colors.blue,
+                ),
+              ],
+            ),
+            
+            const SizedBox(height: 20),
+            const Divider(),
+            const SizedBox(height: 16),
+            
+            // Conversation area - Always show with proper height
+            Expanded(
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade900.withOpacity(0.3),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: Colors.grey.shade800,
+                    width: 1,
+                  ),
+                ),
+                margin: const EdgeInsets.symmetric(vertical: 8),
+                padding: const EdgeInsets.all(12),
+                child: _messages.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              _isRunning ? Icons.mic : Icons.mic_off,
+                              size: 48,
+                              color: Colors.grey.shade600,
+                            ),
+                            const SizedBox(height: 12),
+                            Text(
+                              _isRunning
+                                  ? 'Say "Jarvis" to start a conversation\nYour messages will appear here'
+                                  : 'Enable Jarvis to start voice conversations',
+                              style: TextStyle(
+                                color: Colors.grey.shade500,
+                                fontSize: 14,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
+                        ),
+                      )
+                    : ListView.builder(
+                        reverse: false,
+                        itemCount: _messages.length,
+                        itemBuilder: (context, index) {
+                          final message = _messages[index];
+                          return _buildMessageBubble(message);
+                        },
+                      ),
+              ),
+            ),
+            
+            // Current state indicator
+            if (_isRunning)
+              Padding(
+                padding: const EdgeInsets.only(top: 16),
+                child: Row(
+                  children: [
+                    if (_currentState == 'listening')
+                      _buildStateIndicator(
+                        icon: Icons.hearing,
+                        text: 'Listening for "Jarvis"...',
+                        color: Colors.blue,
+                      )
+                    else if (_currentState == 'activated')
+                      _buildStateIndicator(
+                        icon: Icons.mic,
+                        text: 'Speak your command',
+                        color: Colors.green,
+                      )
+                    else if (_currentState == 'processing')
+                      _buildStateIndicator(
+                        icon: Icons.psychology,
+                        text: 'Processing...',
+                        color: Colors.orange,
+                      )
+                    else if (_currentState == 'speaking')
+                      _buildStateIndicator(
+                        icon: Icons.volume_up,
+                        text: 'Jarvis is speaking',
+                        color: Colors.purple,
+                      ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+  
+  Widget _buildMessageBubble(ConversationMessage message) {
+    // System messages
+    if (message.isSystem) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade800.withOpacity(0.5),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.grey.shade700),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.info_outline, size: 12, color: Colors.grey.shade400),
+                  const SizedBox(width: 6),
+                  Text(
+                    message.text,
+                    style: TextStyle(
+                      color: Colors.grey.shade400,
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    
+    // Activation badge
+    if (message.isActivation) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: Colors.green.shade900.withOpacity(0.3),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.green.shade700, width: 1),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.check_circle, size: 14, color: Colors.green.shade400),
+                  const SizedBox(width: 6),
+                  Text(
+                    '✓ Wake word detected',
+                    style: TextStyle(
+                      color: Colors.green.shade400,
+                      fontWeight: FontWeight.w500,
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    
+    return Align(
+      alignment: message.isUser ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        constraints: const BoxConstraints(
+          maxWidth: 350,
+        ),
+        decoration: BoxDecoration(
+          color: message.isUser
+              ? Colors.blue.shade700.withOpacity(0.8)
+              : Colors.grey.shade800.withOpacity(0.6),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: message.isUser 
+                ? Colors.blue.shade500 
+                : Colors.grey.shade700,
+            width: 1,
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  message.isUser ? Icons.person : Icons.smart_toy,
+                  size: 14,
+                  color: message.isUser ? Colors.white : Colors.cyan.shade400,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  message.isUser ? 'You' : 'Jarvis',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 11,
+                    color: message.isUser ? Colors.white70 : Colors.cyan.shade400,
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  _formatTime(message.timestamp),
+                  style: TextStyle(
+                    fontSize: 9,
+                    color: Colors.grey.shade500,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              message.text,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 13,
+                height: 1.4,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+  
+  String _formatTime(DateTime time) {
+    final now = DateTime.now();
+    if (now.difference(time).inSeconds < 60) {
+      return 'Just now';
+    } else if (now.difference(time).inMinutes < 60) {
+      return '${now.difference(time).inMinutes}m ago';
+    } else {
+      return '${time.hour}:${time.minute.toString().padLeft(2, '0')}';
+    }
+  }
+  
+  Widget _buildStateIndicator({
+    required IconData icon,
+    required String text,
+    required Color color,
+  }) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: color.withOpacity(0.3)),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 16, color: color),
+            const SizedBox(width: 8),
+            Text(
+              text,
+              style: TextStyle(
+                color: color,
+                fontWeight: FontWeight.w500,
+                fontSize: 13,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+  
+  String _getStateText() {
+    if (!_isRunning) return 'Disabled';
+    
+    switch (_currentState) {
+      case 'listening':
+        return 'Listening for wake word';
+      case 'activated':
+        return 'Wake word detected';
+      case 'processing':
+        return 'Processing command';
+      case 'speaking':
+        return 'Speaking response';
+      default:
+        return 'Active';
+    }
+  }
+  
+  Color _getStateColor() {
+    if (!_isRunning) return Colors.grey;
+    
+    switch (_currentState) {
+      case 'listening':
+        return Colors.blue;
+      case 'activated':
+        return Colors.green;
+      case 'processing':
+        return Colors.orange;
+      case 'speaking':
+        return Colors.purple;
+      default:
+        return Colors.grey;
+    }
+  }
+}
+
+class ConversationMessage {
+  final String text;
+  final bool isUser;
+  final bool isActivation;
+  final bool isSystem;
+  final DateTime timestamp;
+  
+  ConversationMessage({
+    required this.text,
+    required this.isUser,
+    this.isActivation = false,
+    this.isSystem = false,
+    required this.timestamp,
+  });
+}

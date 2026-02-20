@@ -5,6 +5,7 @@ import '../widgets/camera_feed.dart';
 import '../widgets/action_log.dart';
 import '../widgets/action_feedback_overlay.dart';
 import '../widgets/glass_container.dart';
+import '../widgets/jarvis_conversation_widget.dart';
 import '../providers/app_provider.dart';
 import '../main.dart';
 
@@ -116,13 +117,19 @@ class DashboardScreen extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 20),
-                // Right panel: stats + log
+                // Right panel: stats + jarvis + log
                 Expanded(
                   flex: 3,
                   child: Column(
                     children: [
                       // Stats Card
                       _buildStatsCard(provider),
+                      const SizedBox(height: 16),
+                      // Jarvis Voice Assistant
+                      const SizedBox(
+                        height: 350,
+                        child: JarvisConversationWidget(),
+                      ),
                       const SizedBox(height: 16),
                       // Action Log
                       const Expanded(child: ActionLog()),
