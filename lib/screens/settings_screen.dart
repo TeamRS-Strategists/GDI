@@ -1,6 +1,8 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import '../widgets/glass_container.dart';
+import '../widgets/voice_command_indicator.dart';
+import '../widgets/jarvis_conversation_widget.dart';
 import '../main.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -92,6 +94,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     _soundFeedback,
                     Icons.volume_up_rounded,
                     (val) => setState(() => _soundFeedback = val),
+                  ),
+                  const SizedBox(height: 28),
+
+                  // Voice Assistant section
+                  _buildSectionTitle('Voice Assistant'),
+                  const SizedBox(height: 12),
+                  const VoiceCommandIndicator(),
+                  const SizedBox(height: 28),
+
+                  // Jarvis Conversational Assistant section
+                  _buildSectionTitle('Jarvis - Conversational AI'),
+                  const SizedBox(height: 12),
+                  const SizedBox(
+                    height: 500,
+                    child: JarvisConversationWidget(),
                   ),
                 ],
               ),

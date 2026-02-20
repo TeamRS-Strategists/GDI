@@ -6,3 +6,15 @@ numpy>=1.24.0
 pyautogui>=0.9.54
 websockets>=12.0
 opencv-python>=4.8.0
+SpeechRecognition>=3.10.0
+pyttsx3>=2.90
+pyaudio>=0.2.13
+
+# Voice Assistant Dependencies
+SpeechRecognition>=3.10.0
+pyttsx3>=2.90
+PyAudio>=0.2.13
+pvporcupine>=3.0.0
+
+# Environment Configuration
+python-dotenv>=1.0.0

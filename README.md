@@ -56,85 +56,27 @@ The application operates on a local Client-Server model to bypass browser sandbo
 
 ---
 
-## 🚀 Installation & Setup
+## 🚀 Quick Run
 
-### Prerequisites
+From project root:
 
-* Python 3.9 or higher
-* Flutter SDK (Stable channel) with Desktop support enabled (`flutter config --enable-windows-desktop` or `macos-desktop`)
-* A working webcam
-
-### 1. Backend Setup
-
-Navigate to the backend directory and set up the Python environment:
-
+1. Start backend
 ```bash
-cd backend
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-pip install -r requirements.txt
-
+./start_backend.sh
 ```
 
-Start the FastAPI WebSocket server:
-
+2. Start frontend
 ```bash
-uvicorn main:app --host 127.0.0.1 --port 8000
-
-```
-
-### 2. Frontend Setup
-
-Navigate to the frontend directory and run the Flutter client:
-
-```bash
-cd frontend
 flutter pub get
-flutter run -d windows # or macos
-
+flutter run -d macos
 ```
 
 ---
 
-## 📖 Usage Guide
+## 📘 Setup and Operations Guide
 
-1. **Monitor the Feed:** Upon launching, the dashboard displays the live camera feed with an overlaid skeletal tracking mesh.
-2. **Control the Mouse:** Raise your hand and point your index finger to move the cursor. Pinch your index and thumb together to click.
-3. 
-**Add a Gesture:** * Navigate to the **Gesture Library**.
+All setup details, environment preparation, API checks, and troubleshooting are consolidated in:
 
-
-* Click **Create New Gesture**.
-* Enter a name and select an action from the dropdown.
-
-
-* Follow the **3-Phase Snapshot Capture** instructions (Center, Closer, Tilted) to collect robust training data.
-
-
-4. **Interact:** Perform the saved gesture. The system will calculate confidence and execute the mapped action (e.g., Muting the microphone) if the threshold is met.
-
----
-
-## 📁 Repository Structure
-
-```text
-github.com/skjeks/gestureflow/
-│
-├── backend/                  # Python API & ML Logic
-│   ├── main.py               # FastAPI WebSocket entry point
-│   ├── vision.py             # MediaPipe landmark extraction
-│   ├── model.py              # KNN Classifier & data storage
-│   ├── controller.py         # PyAutoGUI action mapping
-│   └── mouse_engine.py       # Deterministic cursor control
-│
-└── frontend/                 # Flutter Desktop Client
-    ├── lib/
-    │   ├── main.dart
-    │   ├── services/         # WebSocket communication
-    │   ├── screens/          # Dashboard, Library views
-    │   └── widgets/          # Glassmorphism UI components
-    └── pubspec.yaml
-
-```
+- [SETUP_AND_RUN.md](SETUP_AND_RUN.md)
 
 ---
